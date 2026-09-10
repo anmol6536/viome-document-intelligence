@@ -92,21 +92,22 @@ def test_full_flow_returns_succeeded_job(client, monkeypatch):
     )
     _install_fake_validator(monkeypatch)
 
-    files = {"file": ("report.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
-    create_response = client.post(
-        "/extractions",
-        files=files,
-        data={"schema_id": "lab_observation"},
-        headers={"X-Viome-User-Id": "user-1"},
-    )
-    assert create_response.status_code == 202
-    job_id = create_response.json()["job_id"]
+    try:
+        files = {"file": ("report.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+        create_response = client.post(
+            "/extractions",
+            files=files,
+            data={"schema_id": "lab_observation"},
+            headers={"X-Viome-User-Id": "user-1"},
+        )
+        assert create_response.status_code == 202
+        job_id = create_response.json()["job_id"]
 
-    status_response = client.get(f"/extractions/{job_id}")
-    assert status_response.status_code == 200
-    body = status_response.json()
-    assert body["status"] == "succeeded"
-    assert body["result"]["resourceType"] == "Observation"
-    assert body["result"]["subject"] == {"reference": "Patient/user-1"}
-
-    app.dependency_overrides.clear()
+        status_response = client.get(f"/extractions/{job_id}")
+        assert status_response.status_code == 200
+        body = status_response.json()
+        assert body["status"] == "succeeded"
+        assert body["result"]["resourceType"] == "Observation"
+        assert body["result"]["subject"] == {"reference": "Patient/user-1"}
+    finally:
+        app.dependency_overrides.clear()

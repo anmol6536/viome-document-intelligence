@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Header, UploadFile
 
 from app.ai.base import AIClient
@@ -14,6 +16,7 @@ from app.schemas.registry import SchemaRegistry, get_schema_registry
 router = APIRouter()
 
 
+@lru_cache
 def _build_fhir_validator() -> FhirValidator:
     return FhirValidator(base_url=get_settings().fhir_validator_url)
 
@@ -65,6 +68,7 @@ async def create_extraction(
         user_id=x_viome_user_id,
         store=store,
         fhir_validator=_build_fhir_validator(),
+        model_id=model_id,
     )
 
     return JobCreatedResponse(job_id=record.job_id)
