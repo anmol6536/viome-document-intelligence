@@ -11,7 +11,7 @@ from google.genai import types
 from app.ai.gemini.prompts import build_extraction_prompt
 from app.jobs.retry_policy import RetryPolicy, TransportError
 
-DEFAULT_MODEL_NAME = "gemini-3.6-flash"
+DEFAULT_MODEL_NAME = "gemini-3.1-flash-lite"
 # The installed google-genai SDK version (0.3.0) has no built-in request
 # timeout, and its calls are synchronous/blocking. Without a bound, a stalled
 # Gemini response hangs this call forever - and since this runs inside the
