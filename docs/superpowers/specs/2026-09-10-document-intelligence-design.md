@@ -40,11 +40,12 @@ Client                     FastAPI app                 AI provider      HL7 Vali
   |                            | create job (pending)          |                 |
   |  202 {job_id}              | enqueue background task       |                 |
   |<---------------------------|                               |                 |
-  |                            | RetryPolicy.run(client, ...)  |                 |
+  |                            | client(file, schema, ...)     |                 |
+  |                            | [client's RetryPolicy retries |                 |
+  |                            |  transport + validation       |                 |
+  |                            |  internally, up to N]         |                 |
   |                            |----(1) send file + prompt---->|                 |
   |                            |<---(2) minimal JSON------------|                 |
-  |                            | validate vs extraction schema |                 |
-  |                            | (retry w/ feedback, up to N)  |                 |
   |                            | map minimal JSON -> Observation                |
   |                            |----(3) validate resource------------------------>|
   |                            |<---(4) issues / OK--------------------------------|
@@ -112,39 +113,52 @@ handles extraction (`gemini` is the only one implemented in v1, others
 plug in the same way later). This is a plain interface, not a heavy plugin
 system:
 
-- `app/ai/base.py` defines the `AIClient` protocol:
-  `extract(file_bytes, mime_type, schema: dict, prompt_context) -> dict`,
-  plus whatever error types callers need to distinguish (transport vs.
-  malformed-response).
-- `app/ai/gemini/client.py` implements `AIClient` for Gemini — wraps the
-  Gemini SDK, uses its structured/JSON output mode, passing the extraction
-  schema so the model is constrained toward the right shape.
-- `app/ai/registry.py` maps a model id string (`"gemini"`) to an `AIClient`
-  instance; `api/extractions.py` reads `X-AI-Model` (or the configured
-  default) and looks up the client once per request.
+- `app/ai/base.py` defines the `AIClient` protocol — **callable**, not a
+  named `extract` method:
+  `__call__(file_bytes, mime_type, schema: dict, prompt_context) -> dict`.
+  A client is constructed with a `RetryPolicy` injected in (see below), and
+  calling the client runs the full retried extraction — callers never touch
+  retry logic directly.
+- `app/ai/gemini/client.py` implements `AIClient` for Gemini:
+  `GeminiClient(retry_policy: RetryPolicy, ...)`. `__call__` does the actual
+  request work (builds the Gemini request/URL, sends the file + prompt,
+  parses the response) wrapped by `self._retry_policy` internally — the
+  policy governs both transport retries around that request and, since it
+  receives the extraction schema, the validation retry-with-feedback
+  (re-invoking the same underlying request with validation errors appended
+  when the parsed response fails schema validation).
+- `app/ai/registry.py` builds one `AIClient` per model id at startup — e.g.
+  `{"gemini": GeminiClient(retry_policy=RetryPolicy(...), ...)}` — so the
+  policy (and its config: max retries, backoff) is wired in once per
+  provider, not passed around per call. `api/extractions.py` reads
+  `X-AI-Model` (or the configured default) and looks up the client for the
+  request.
 
-Adding a provider later means adding `app/ai/<provider>/client.py` and a
-registry entry — no changes to the worker, retry policy, or API contract.
+Adding a provider later means adding `app/ai/<provider>/client.py`
+(constructed with its own `RetryPolicy` instance) and a registry entry — no
+changes to the worker or API contract.
 
 ## RetryPolicy
 
-Retry logic is its own component, not inlined into the worker, so retry
-behavior is independently testable/tunable and reusable across providers:
+Retry logic is its own component (`app/jobs/retry_policy.py`), injected into
+an `AIClient` at construction rather than orchestrated by a caller, so
+retry behavior is independently testable/tunable and reusable across
+providers without leaking into `worker.py`:
 
-- `app/jobs/retry_policy.py` defines `RetryPolicy`:
-  - Transport retries — bounded retries with backoff around a single
-    `AIClient.extract` call, for timeouts/5xx-style transport errors.
-  - Validation retry-with-feedback — given an `AIClient`, a prompt, and an
-    extraction schema, repeatedly calls the client, validates the result
-    against the schema (`jsonschema` library), and on failure re-invokes
-    the client with the original file plus the validation errors appended,
-    up to `MAX_EXTRACTION_RETRIES` (config, default 3).
-  - Returns either a validated minimal-JSON result or a structured failure
-    (`gemini_unavailable` / `extraction_validation_failed` with the last
-    validation errors attached).
-- `app/jobs/worker.py` calls `RetryPolicy.run(client, schema, prompt_context)`
-  as one step in the pipeline — it does not itself know about retries or
-  backoff.
+- `RetryPolicy` wraps a single "do the request" callable (given by the
+  `AIClient`) and provides:
+  - Transport retries — bounded retries with backoff for timeouts/5xx-style
+    transport errors.
+  - Validation retry-with-feedback — validates the parsed result against
+    the extraction schema (`jsonschema` library); on failure, re-invokes
+    the wrapped callable with the original file plus the validation errors
+    appended, up to `MAX_EXTRACTION_RETRIES` (config, default 3).
+  - Raises/returns a structured failure (`<provider>_unavailable` /
+    `extraction_validation_failed` with the last validation errors) when
+    exhausted.
+- `app/jobs/worker.py` simply calls `client(file_bytes, mime_type, schema,
+  prompt_context)` as one step in the pipeline — it has no knowledge that
+  retries happen at all; that's entirely inside the client it was handed.
 
 ## FHIR validation service
 
@@ -165,7 +179,9 @@ in the image build, not at runtime.
 holding job state: `job_id`, `status`, `user_id`, `schema_id`, `model_id`,
 `result`, `error`, timestamps. `app/jobs/worker.py` is the function passed
 to FastAPI's `BackgroundTasks`, driving a job through
-`RetryPolicy.run(client, ...)` → map → FHIR-validate → finalize.
+`client(file_bytes, mime_type, schema, prompt_context)` (retries handled
+internally by the client's injected `RetryPolicy`) → map → FHIR-validate →
+finalize.
 
 This is explicitly a v1 simplification (see Non-goals) — swapping in a
 durable queue later means replacing `JobStore`'s implementation behind the
@@ -238,10 +254,11 @@ Dependency management: plain `pip` + `requirements.txt` (no Poetry/uv).
 
 ## Testing
 
-- **Unit tests**: schema registry loading, Gemini client (mocked SDK) against
-  the `AIClient` protocol, mapper (minimal JSON → FHIR dict) with fixtures
-  per extraction schema, and `RetryPolicy` in isolation (fed a fake
-  `AIClient` that fails N times then succeeds, or never succeeds).
+- **Unit tests**: schema registry loading, `GeminiClient` (mocked SDK)
+  against the `AIClient` protocol, mapper (minimal JSON → FHIR dict) with
+  fixtures per extraction schema, and `RetryPolicy` in isolation (wrapping a
+  fake request callable that fails N times then succeeds, or never
+  succeeds, asserting on retry counts and the final structured failure).
 - **Integration tests**: `docker-compose` brings up the app + HL7 validator
   sidecar; a fixture file is driven through `POST /extractions` → poll
   `GET /extractions/{id}` → assert on the final FHIR `Observation`, using a
