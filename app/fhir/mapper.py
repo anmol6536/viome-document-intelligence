@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+IG_CANONICAL = "http://viome.com/fhir/document-intelligence"
+VIOME_LAB_OBSERVATION_PROFILE = f"{IG_CANONICAL}/StructureDefinition/viome-lab-observation"
+
 
 class MappingError(Exception):
     """Raised when minimal extracted data cannot be mapped to a FHIR resource."""
@@ -8,6 +11,7 @@ class MappingError(Exception):
 def _map_lab_observation(minimal_data: dict, user_id: str) -> dict:
     return {
         "resourceType": "Observation",
+        "meta": {"profile": [VIOME_LAB_OBSERVATION_PROFILE]},
         "status": "final",
         "code": {
             "coding": [

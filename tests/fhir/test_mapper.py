@@ -15,6 +15,9 @@ def test_maps_lab_observation_to_fhir_observation():
     observation = map_to_observation("lab_observation", minimal, user_id="user-123")
 
     assert observation["resourceType"] == "Observation"
+    assert observation["meta"]["profile"] == [
+        "http://viome.com/fhir/document-intelligence/StructureDefinition/viome-lab-observation"
+    ]
     assert observation["status"] == "final"
     assert observation["subject"] == {"reference": "Patient/user-123"}
     assert observation["effectiveDateTime"] == "2026-01-15"
