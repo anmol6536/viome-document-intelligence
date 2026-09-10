@@ -41,6 +41,8 @@ class JobStore:
 
     async def update(self, job_id: str, **fields) -> JobRecord:
         async with self._lock:
+            if job_id not in self._jobs:
+                raise KeyError(f"no job found with id={job_id!r}")
             current = self._jobs[job_id]
             updated = replace(current, updated_at=datetime.now(UTC), **fields)
             self._jobs[job_id] = updated
