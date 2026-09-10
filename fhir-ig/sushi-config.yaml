@@ -1,0 +1,12 @@
+canonical: http://viome.com/fhir/document-intelligence
+name: ViomeDocumentIntelligenceIG
+id: viome.fhir.document-intelligence
+status: draft
+version: 0.1.0
+fhirVersion: 4.0.1
+copyrightYear: 2026+
+releaseLabel: ci-build
+publisher:
+  name: Viome
+parameters:
+  show-inherited-invariants: false
