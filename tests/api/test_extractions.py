@@ -30,6 +30,17 @@ def test_missing_user_id_header_returns_400(client):
     assert response.status_code == 400
 
 
+def test_empty_user_id_header_returns_400(client):
+    files = {"file": ("report.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+    response = client.post(
+        "/extractions",
+        files=files,
+        data={"schema_id": "lab_observation"},
+        headers={"X-Viome-User-Id": ""},
+    )
+    assert response.status_code == 400
+
+
 def test_unknown_schema_id_returns_400(client):
     files = {"file": ("report.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
     response = client.post(
