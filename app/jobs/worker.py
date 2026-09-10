@@ -51,8 +51,14 @@ async def run_extraction_job(
             )
             return
 
+        if resource.get("resourceType") == "Bundle":
+            resources_to_validate = [entry["resource"] for entry in resource.get("entry", [])]
+        else:
+            resources_to_validate = [resource]
+
         try:
-            fhir_validator.validate(resource)
+            for entry_resource in resources_to_validate:
+                fhir_validator.validate(entry_resource)
         except FhirValidationError as exc:
             await store.update(
                 job_id,

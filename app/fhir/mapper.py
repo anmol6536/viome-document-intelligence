@@ -33,8 +33,19 @@ def _map_lab_observation(minimal_data: dict, user_id: str) -> dict:
     }
 
 
+def _map_multi_observation(minimal_data: list, user_id: str) -> dict:
+    return {
+        "resourceType": "Bundle",
+        "type": "collection",
+        "entry": [
+            {"resource": _map_lab_observation(item, user_id)} for item in minimal_data
+        ],
+    }
+
+
 _MAPPERS = {
     "lab_observation": _map_lab_observation,
+    "multi_observation": _map_multi_observation,
 }
 
 
