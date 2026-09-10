@@ -6,10 +6,11 @@ Status: Approved for planning
 ## Purpose
 
 A FastAPI service that ingests lab/diagnostic report files (PDF, JPEG, PNG),
-sends them to Gemini to extract structured data, validates and converts that
-data into a FHIR-compliant resource, and returns it to the caller. The
-service is scoped to Viome-internal callers and one user (patient) per
-request, identified via a required header.
+sends them to an AI model (Gemini for v1, other providers swappable later)
+to extract structured data, validates and converts that data into a
+FHIR-compliant resource, and returns it to the caller. The service is scoped
+to Viome-internal callers and one user (patient) per request, identified via
+a required header.
 
 ## Non-goals (v1)
 
@@ -28,16 +29,18 @@ request, identified via a required header.
 ## High-level flow
 
 ```
-Client                     FastAPI app                    Gemini          HL7 Validator
-  |  POST /extractions        |                               |                 |
+Client                     FastAPI app                 AI provider      HL7 Validator
+  |  POST /extractions        |                          (e.g. Gemini)          |
   |  (file, schema_id,        |                               |                 |
-  |   X-Viome-User-Id)        |                               |                 |
+  |   X-Viome-User-Id,        |                               |                 |
+  |   X-AI-Model?)            |                               |                 |
   |--------------------------->|                               |                 |
   |                            | validate file type/size,     |                 |
-  |                            | schema_id, header             |                 |
+  |                            | schema_id, headers            |                 |
   |                            | create job (pending)          |                 |
   |  202 {job_id}              | enqueue background task       |                 |
   |<---------------------------|                               |                 |
+  |                            | RetryPolicy.run(client, ...)  |                 |
   |                            |----(1) send file + prompt---->|                 |
   |                            |<---(2) minimal JSON------------|                 |
   |                            | validate vs extraction schema |                 |
@@ -58,7 +61,11 @@ Client                     FastAPI app                    Gemini          HL7 Va
 
 - Multipart form: `file` (PDF/JPEG/PNG, size-limited via config), `schema_id`
   (string, must match a registered extraction schema).
-- Header: `X-Viome-User-Id` (required, non-empty). Missing/empty → `400`.
+- Headers:
+  - `X-Viome-User-Id` (required, non-empty). Missing/empty → `400`.
+  - `X-AI-Model` (optional, e.g. `gemini`). Selects which AI provider handles
+    the extraction. Defaults to the configured default provider (`gemini`
+    for v1) when omitted. Unknown value → `400`.
 - Validates file content-type/extension and size before enqueueing.
 - Unknown `schema_id` → `400`.
 - On success: `202 Accepted`, body `{"job_id": "<uuid>"}`.
@@ -98,26 +105,46 @@ easy to explain back to the model. FHIR structural rigor (cardinality,
 invariants, custom profile constraints) is enforced deterministically afterward
 by the mapper + HL7 validator, not by hoping Gemini emits valid FHIR directly.
 
-## Gemini integration & retry-with-feedback
+## AI provider abstraction
 
-`app/ai/gemini/client.py` wraps the Gemini SDK:
+The service is not Gemini-specific: `X-AI-Model` selects which provider
+handles extraction (`gemini` is the only one implemented in v1, others
+plug in the same way later). This is a plain interface, not a heavy plugin
+system:
 
-- `extract(file_bytes, mime_type, schema: dict, prompt_context) -> dict`
-- Uses Gemini's structured/JSON output mode, passing the extraction schema
-  so the model is constrained toward the right shape.
-- Transport-level errors (timeout, 5xx) are retried with backoff
-  (separate, small retry budget) before failing the job.
+- `app/ai/base.py` defines the `AIClient` protocol:
+  `extract(file_bytes, mime_type, schema: dict, prompt_context) -> dict`,
+  plus whatever error types callers need to distinguish (transport vs.
+  malformed-response).
+- `app/ai/gemini/client.py` implements `AIClient` for Gemini — wraps the
+  Gemini SDK, uses its structured/JSON output mode, passing the extraction
+  schema so the model is constrained toward the right shape.
+- `app/ai/registry.py` maps a model id string (`"gemini"`) to an `AIClient`
+  instance; `api/extractions.py` reads `X-AI-Model` (or the configured
+  default) and looks up the client once per request.
 
-Retry-with-feedback loop (`app/jobs/worker.py`):
+Adding a provider later means adding `app/ai/<provider>/client.py` and a
+registry entry — no changes to the worker, retry policy, or API contract.
 
-1. Call Gemini with the base prompt for `schema_id`.
-2. Validate the returned JSON against the extraction schema
-   (`jsonschema` library).
-3. If invalid, re-prompt Gemini with the original file plus the validation
-   errors appended, asking it to correct its output.
-4. Repeat up to `MAX_EXTRACTION_RETRIES` (config, default 3). If still
-   invalid, job fails with reason `extraction_validation_failed` and the
-   last validation errors attached.
+## RetryPolicy
+
+Retry logic is its own component, not inlined into the worker, so retry
+behavior is independently testable/tunable and reusable across providers:
+
+- `app/jobs/retry_policy.py` defines `RetryPolicy`:
+  - Transport retries — bounded retries with backoff around a single
+    `AIClient.extract` call, for timeouts/5xx-style transport errors.
+  - Validation retry-with-feedback — given an `AIClient`, a prompt, and an
+    extraction schema, repeatedly calls the client, validates the result
+    against the schema (`jsonschema` library), and on failure re-invokes
+    the client with the original file plus the validation errors appended,
+    up to `MAX_EXTRACTION_RETRIES` (config, default 3).
+  - Returns either a validated minimal-JSON result or a structured failure
+    (`gemini_unavailable` / `extraction_validation_failed` with the last
+    validation errors attached).
+- `app/jobs/worker.py` calls `RetryPolicy.run(client, schema, prompt_context)`
+  as one step in the pipeline — it does not itself know about retries or
+  backoff.
 
 ## FHIR validation service
 
@@ -135,10 +162,10 @@ in the image build, not at runtime.
 ## Job store
 
 `app/jobs/store.py` — an in-memory store (dict guarded by an `asyncio.Lock`)
-holding job state: `job_id`, `status`, `user_id`, `schema_id`, `result`,
-`error`, timestamps. `app/jobs/worker.py` is the function passed to FastAPI's
-`BackgroundTasks`, driving a job through Gemini → validate/retry → map →
-FHIR-validate → finalize.
+holding job state: `job_id`, `status`, `user_id`, `schema_id`, `model_id`,
+`result`, `error`, timestamps. `app/jobs/worker.py` is the function passed
+to FastAPI's `BackgroundTasks`, driving a job through
+`RetryPolicy.run(client, ...)` → map → FHIR-validate → finalize.
 
 This is explicitly a v1 simplification (see Non-goals) — swapping in a
 durable queue later means replacing `JobStore`'s implementation behind the
@@ -151,8 +178,9 @@ same interface (`create`, `update`, `get`), not rewriting callers.
 | Unsupported file type / oversized file | `400` at upload | — |
 | Unknown `schema_id` | `400` at upload | — |
 | Missing/empty `X-Viome-User-Id` | `400` at upload | — |
+| Unknown/unsupported `X-AI-Model` | `400` at upload | — |
 | Unknown `job_id` on GET | `404` | — |
-| Gemini transport error (after retries) | job `failed` | `gemini_unavailable` |
+| AI provider transport error (after `RetryPolicy` retries) | job `failed` | `<provider>_unavailable` (e.g. `gemini_unavailable`) |
 | Extraction schema validation fails after `MAX_EXTRACTION_RETRIES` | job `failed` | `extraction_validation_failed` |
 | Mapper cannot build a resource from valid minimal JSON | job `failed` | `mapping_failed` |
 | HL7 validator rejects the mapped resource | job `failed` | `fhir_validation_failed` |
@@ -171,8 +199,10 @@ extracted data, not something re-prompting the model fixes.
 │   ├── api/
 │   │   └── extractions.py        # POST/GET, reads X-Viome-User-Id
 │   ├── ai/
+│   │   ├── base.py                 # AIClient protocol
+│   │   ├── registry.py             # model_id -> AIClient
 │   │   └── gemini/
-│   │       ├── client.py
+│   │       ├── client.py           # AIClient impl for Gemini
 │   │       └── prompts.py
 │   ├── schemas/
 │   │   ├── registry.py            # loads *.extract.schema.json at startup
@@ -182,12 +212,14 @@ extracted data, not something re-prompting the model fixes.
 │   │   └── validator.py            # calls HL7 validator service over HTTP
 │   ├── jobs/
 │   │   ├── store.py                # in-memory job state
+│   │   ├── retry_policy.py         # RetryPolicy: transport + validation retry-with-feedback
 │   │   └── worker.py               # orchestrates the pipeline
 │   ├── models/
 │   │   └── api.py                  # Pydantic request/response models
 │   └── core/
-│       └── config.py               # settings: Gemini key, retry counts,
-│                                    # allowed file types/size, validator URL
+│       └── config.py               # settings: provider API keys, default
+│                                    # model, retry counts, allowed file
+│                                    # types/size, validator URL
 ├── fhir-ig/                         # FSH source + sushi-config.yaml
 │   ├── sushi-config.yaml
 │   └── input/fsh/observation.fsh
@@ -206,9 +238,10 @@ Dependency management: plain `pip` + `requirements.txt` (no Poetry/uv).
 
 ## Testing
 
-- **Unit tests**: schema registry loading, Gemini client (mocked SDK), mapper
-  (minimal JSON → FHIR dict) with fixtures per extraction schema, and the
-  retry-with-feedback loop logic in isolation.
+- **Unit tests**: schema registry loading, Gemini client (mocked SDK) against
+  the `AIClient` protocol, mapper (minimal JSON → FHIR dict) with fixtures
+  per extraction schema, and `RetryPolicy` in isolation (fed a fake
+  `AIClient` that fails N times then succeeds, or never succeeds).
 - **Integration tests**: `docker-compose` brings up the app + HL7 validator
   sidecar; a fixture file is driven through `POST /extractions` → poll
   `GET /extractions/{id}` → assert on the final FHIR `Observation`, using a
@@ -225,3 +258,5 @@ Dependency management: plain `pip` + `requirements.txt` (no Poetry/uv).
 - Authentication (API key or similar) before any non-trusted-network exposure.
 - Terminology-server-backed validation (LOINC/SNOMED code binding).
 - Support for additional FHIR resource types beyond `Observation`.
+- Additional AI providers beyond Gemini (structure supports it via
+  `AIClient`/`app/ai/registry.py`; only `gemini` is implemented in v1).
