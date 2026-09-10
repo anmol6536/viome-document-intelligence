@@ -15,6 +15,6 @@ COPY --from=validator-jar /opt/validator_cli.jar /opt/validator_cli.jar
 COPY --from=ig-build /ig/fsh-generated/resources /ig/output
 WORKDIR /srv
 COPY docker/validator/server.py .
-RUN pip3 install --no-cache-dir --break-system-packages fastapi uvicorn
+RUN pip3 install --no-cache-dir --break-system-packages fastapi uvicorn httpx
 EXPOSE 8090
 CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8090"]
