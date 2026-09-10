@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from app.ai.base import AIClient
 from app.fhir.mapper import MappingError, map_to_observation
 from app.fhir.validator import FhirValidationError, FhirValidator, ValidatorUnavailableError
@@ -41,8 +43,10 @@ async def run_extraction_job(
             )
             return
 
+        document_checksum = hashlib.sha256(file_bytes).hexdigest()
+
         try:
-            resource = map_to_observation(schema_id, minimal_data, user_id)
+            resource = map_to_observation(schema_id, minimal_data, user_id, document_checksum)
         except MappingError as exc:
             await store.update(
                 job_id,
