@@ -1,0 +1,13 @@
+[project]
+name = "viome-document-intelligence"
+version = "0.1.0"
+description = "AI-assisted extraction of lab report data into FHIR resources"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
