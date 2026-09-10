@@ -9,7 +9,7 @@ from google.genai import types
 from app.ai.gemini.prompts import build_extraction_prompt
 from app.jobs.retry_policy import RetryPolicy, TransportError
 
-DEFAULT_MODEL_NAME = "gemini-2.5-flash"
+DEFAULT_MODEL_NAME = "gemini-3.6-flash"
 
 
 class GeminiClient:

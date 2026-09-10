@@ -46,7 +46,7 @@ def test_call_returns_parsed_json_on_success():
     result = client(b"filebytes", "application/pdf", SCHEMA, "context")
 
     assert result == {"value": 1}
-    assert sdk_client.models.calls[0]["model"] == "gemini-2.5-flash"
+    assert sdk_client.models.calls[0]["model"] == "gemini-3.6-flash"
 
 
 def test_call_retries_with_feedback_on_invalid_json_shape():
