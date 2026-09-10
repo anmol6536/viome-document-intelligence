@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LabObservationExtraction",
+  "type": "object",
+  "required": ["code", "display", "value", "unit", "effective_date"],
+  "properties": {
+    "code": {"type": "string", "description": "LOINC code for the lab test"},
+    "display": {"type": "string", "description": "Human-readable test name"},
+    "value": {"type": "number", "description": "Numeric result value"},
+    "unit": {"type": "string", "description": "UCUM unit for the value"},
+    "effective_date": {"type": "string", "format": "date", "description": "YYYY-MM-DD date the sample was taken/reported"}
+  },
+  "additionalProperties": false
+}
