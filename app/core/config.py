@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     max_transport_retries: int = 2
     max_validation_retries: int = 3
     retry_backoff_seconds: float = 1.0
+    gemini_request_timeout_seconds: float = 60.0
 
     fhir_validator_url: str = "http://localhost:8090"
 

@@ -15,7 +15,11 @@ def build_ai_client_registry(settings: Settings) -> dict[str, AIClient]:
         backoff_seconds=settings.retry_backoff_seconds,
     )
     return {
-        "gemini": GeminiClient(retry_policy=retry_policy, api_key=settings.gemini_api_key),
+        "gemini": GeminiClient(
+            retry_policy=retry_policy,
+            api_key=settings.gemini_api_key,
+            request_timeout_seconds=settings.gemini_request_timeout_seconds,
+        ),
     }
 
 

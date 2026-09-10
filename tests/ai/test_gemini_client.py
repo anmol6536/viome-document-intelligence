@@ -1,9 +1,10 @@
 import json
+import time
 
 import pytest
 
 from app.ai.gemini.client import GeminiClient
-from app.jobs.retry_policy import RetryPolicy, TransportError
+from app.jobs.retry_policy import ProviderUnavailableError, RetryPolicy, TransportError
 
 SCHEMA = {
     "type": "object",
@@ -83,3 +84,23 @@ def test_transport_error_from_sdk_is_wrapped_and_retried(monkeypatch):
     with pytest.raises(Exception):
         client(b"filebytes", "application/pdf", SCHEMA, "context")
     assert len(sdk_client.models.calls) == 2
+
+
+def test_call_raises_provider_unavailable_when_sdk_call_hangs_past_timeout():
+    class _SlowModels(_FakeModels):
+        def generate_content(self, model, contents, config):
+            time.sleep(0.2)  # longer than the client's request_timeout_seconds below
+            return _FakeResponse(json.dumps({"value": 1}))
+
+    sdk_client = _FakeSdkClient([])
+    sdk_client.models = _SlowModels([])
+
+    client = GeminiClient(
+        retry_policy=RetryPolicy(max_transport_retries=0, sleep_fn=lambda _: None),
+        api_key="unused",
+        sdk_client=sdk_client,
+        request_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(ProviderUnavailableError):
+        client(b"filebytes", "application/pdf", SCHEMA, "context")
