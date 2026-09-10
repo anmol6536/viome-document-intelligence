@@ -19,51 +19,59 @@ async def run_extraction_job(
     user_id: str,
     store: JobStore,
     fhir_validator: FhirValidator,
+    model_id: str,
 ) -> None:
     await store.update(job_id, status=JobStatus.PROCESSING)
 
     try:
-        minimal_data = client(file_bytes, mime_type, schema, prompt_context)
-    except ProviderUnavailableError as exc:
-        await store.update(
-            job_id,
-            status=JobStatus.FAILED,
-            error=JobError(reason="gemini_unavailable", detail=str(exc)),
-        )
-        return
-    except ExtractionValidationError as exc:
-        await store.update(
-            job_id,
-            status=JobStatus.FAILED,
-            error=JobError(reason="extraction_validation_failed", detail=exc.errors),
-        )
-        return
+        try:
+            minimal_data = client(file_bytes, mime_type, schema, prompt_context)
+        except ProviderUnavailableError as exc:
+            await store.update(
+                job_id,
+                status=JobStatus.FAILED,
+                error=JobError(reason=f"{model_id}_unavailable", detail=str(exc)),
+            )
+            return
+        except ExtractionValidationError as exc:
+            await store.update(
+                job_id,
+                status=JobStatus.FAILED,
+                error=JobError(reason="extraction_validation_failed", detail=exc.errors),
+            )
+            return
 
-    try:
-        resource = map_to_observation(schema_id, minimal_data, user_id)
-    except MappingError as exc:
-        await store.update(
-            job_id,
-            status=JobStatus.FAILED,
-            error=JobError(reason="mapping_failed", detail=str(exc)),
-        )
-        return
+        try:
+            resource = map_to_observation(schema_id, minimal_data, user_id)
+        except MappingError as exc:
+            await store.update(
+                job_id,
+                status=JobStatus.FAILED,
+                error=JobError(reason="mapping_failed", detail=str(exc)),
+            )
+            return
 
-    try:
-        fhir_validator.validate(resource)
-    except FhirValidationError as exc:
-        await store.update(
-            job_id,
-            status=JobStatus.FAILED,
-            error=JobError(reason="fhir_validation_failed", detail=exc.issues),
-        )
-        return
-    except ValidatorUnavailableError as exc:
-        await store.update(
-            job_id,
-            status=JobStatus.FAILED,
-            error=JobError(reason="validator_unavailable", detail=str(exc)),
-        )
-        return
+        try:
+            fhir_validator.validate(resource)
+        except FhirValidationError as exc:
+            await store.update(
+                job_id,
+                status=JobStatus.FAILED,
+                error=JobError(reason="fhir_validation_failed", detail=exc.issues),
+            )
+            return
+        except ValidatorUnavailableError as exc:
+            await store.update(
+                job_id,
+                status=JobStatus.FAILED,
+                error=JobError(reason="validator_unavailable", detail=str(exc)),
+            )
+            return
 
-    await store.update(job_id, status=JobStatus.SUCCEEDED, result=resource)
+        await store.update(job_id, status=JobStatus.SUCCEEDED, result=resource)
+    except Exception as exc:  # noqa: BLE001 - safety net so a job can never stay PROCESSING
+        await store.update(
+            job_id,
+            status=JobStatus.FAILED,
+            error=JobError(reason="internal_error", detail=str(exc)),
+        )

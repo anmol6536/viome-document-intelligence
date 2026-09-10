@@ -24,9 +24,11 @@ class FhirValidator:
         try:
             response = self._http_client.post(f"{self._base_url}/validate", json=resource)
             response.raise_for_status()
+            payload = response.json()
         except httpx.HTTPError as exc:
             raise ValidatorUnavailableError(str(exc)) from exc
+        except ValueError as exc:  # non-JSON response body
+            raise ValidatorUnavailableError(str(exc)) from exc
 
-        payload = response.json()
         if not payload.get("valid", False):
             raise FhirValidationError(payload.get("issues", []))

@@ -41,6 +41,7 @@ async def test_successful_job_ends_succeeded_with_mapped_resource():
         user_id="user-1",
         store=store,
         fhir_validator=validator,
+        model_id="gemini",
     )
 
     final = await store.get(record.job_id)
@@ -68,6 +69,7 @@ async def test_provider_unavailable_fails_job_with_reason():
         user_id="user-1",
         store=store,
         fhir_validator=_FakeValidator(),
+        model_id="gemini",
     )
 
     final = await store.get(record.job_id)
@@ -94,6 +96,7 @@ async def test_extraction_validation_failure_fails_job_with_detail():
         user_id="user-1",
         store=store,
         fhir_validator=_FakeValidator(),
+        model_id="gemini",
     )
 
     final = await store.get(record.job_id)
@@ -125,6 +128,7 @@ async def test_fhir_validation_failure_is_terminal_not_retried():
         user_id="user-1",
         store=store,
         fhir_validator=validator,
+        model_id="gemini",
     )
 
     final = await store.get(record.job_id)
@@ -154,8 +158,37 @@ async def test_validator_unavailable_fails_job():
         user_id="user-1",
         store=store,
         fhir_validator=validator,
+        model_id="gemini",
     )
 
     final = await store.get(record.job_id)
     assert final.status == JobStatus.FAILED
     assert final.error.reason == "validator_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_fails_job_as_internal_error():
+    store = JobStore()
+    record = await store.create(user_id="user-1", schema_id="lab_observation", model_id="gemini")
+
+    def client(file_bytes, mime_type, schema, prompt_context):
+        raise RuntimeError("boom")
+
+    await run_extraction_job(
+        job_id=record.job_id,
+        file_bytes=b"pdf-bytes",
+        mime_type="application/pdf",
+        client=client,
+        schema=SCHEMA,
+        prompt_context="lab observation",
+        schema_id="lab_observation",
+        user_id="user-1",
+        store=store,
+        fhir_validator=_FakeValidator(),
+        model_id="gemini",
+    )
+
+    final = await store.get(record.job_id)
+    assert final.status == JobStatus.FAILED
+    assert final.error.reason == "internal_error"
+    assert final.error.detail == "boom"

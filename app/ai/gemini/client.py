@@ -38,8 +38,8 @@ class GeminiClient:
                     ],
                     config={"response_mime_type": "application/json"},
                 )
-            except Exception as exc:  # SDK-level transport/timeout errors
+                return json.loads(response.text)
+            except Exception as exc:  # SDK-level transport/timeout errors, or malformed JSON
                 raise TransportError(str(exc)) from exc
-            return json.loads(response.text)
 
         return self._retry_policy.run(do_request, schema)
