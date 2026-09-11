@@ -7,13 +7,13 @@
 # Defaults:
 #   file      = data/Result Trends - LIPID PANEL - Aug 4, 2026.PDF
 #   schema_id = multi_observation
-#   base_url  = http://localhost:8001
+#   base_url  = http://localhost:8020
 
 set -euo pipefail
 
 FILE="${1:-data/Result Trends - LIPID PANEL - Aug 4, 2026.PDF}"
 SCHEMA_ID="${2:-multi_observation}"
-BASE_URL="${3:-http://localhost:8001}"
+BASE_URL="${3:-http://localhost:8020}"
 USER_ID="${X_VIOME_USER_ID:-test-user-1}"
 
 if [ ! -f "$FILE" ]; then

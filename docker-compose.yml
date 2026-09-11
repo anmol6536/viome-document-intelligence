@@ -1,17 +1,22 @@
 services:
+  # Host port 8020 -> viome-document-intelligence API.
+  # Reserved block for this project: 8020 (app), 8021 (FHIR validator).
+  # This machine runs several 8xxx "health data" services - pick a free
+  # slot outside other projects' ranges if you change these.
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "8020:8000"
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-changeme}
       FHIR_VALIDATOR_URL: http://validator:8090
     depends_on:
       - validator
 
+  # Host port 8021 -> HL7 FHIR validator sidecar.
   validator:
     build:
       context: .
       dockerfile: docker/validator/Dockerfile
     ports:
-      - "8090:8090"
+      - "8021:8090"
