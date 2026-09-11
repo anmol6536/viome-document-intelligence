@@ -11,3 +11,4 @@ fhir-ig/fsh-generated/
 .DS_Store
 data/
 .tmp*.json
+/tmp/
