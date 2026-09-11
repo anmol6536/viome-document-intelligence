@@ -12,15 +12,14 @@
 #   viome_user_id = test-user-1  (must match the X-Viome-User-Id used when
 #                                  the job was submitted, since that's what
 #                                  ended up in the resource's subject.reference)
-#   gateway_url   = ${GATEWAY_URL:-http://localhost:9000/ingest}  (placeholder -
-#                    not yet a real, confirmed endpoint)
+#   gateway_url   = ${GATEWAY_URL:-http://localhost:8090/ingest}
 #   api_base_url  = http://localhost:8020  (this service's own API)
 
 set -euo pipefail
 
 JOB_ID="${1:?Usage: ./ingest.sh <job_id> [viome_user_id] [gateway_url] [api_base_url]}"
 VIOME_USER_ID="${2:-test-user-1}"
-GATEWAY_URL="${3:-${GATEWAY_URL:-http://localhost:9000/ingest}}"
+GATEWAY_URL="${3:-${GATEWAY_URL:-http://localhost:8090/ingest}}"
 API_BASE_URL="${4:-http://localhost:8020}"
 
 STATUS_JSON=$(curl -s "$API_BASE_URL/extractions/$JOB_ID")
